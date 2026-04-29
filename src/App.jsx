@@ -6,36 +6,49 @@ import "./App.css";
 
 const API = process.env.REACT_APP_API_URL || "";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-const gradeColor = (g) =>
-  g === 1 ? "#16a34a" : g === 2 ? "#d97706" : "#dc2626";
-const gradeIcon  = (g) => (g === 1 ? "🏅" : g === 2 ? "🟡" : "🔴");
+// ── helpers ───────────────────────────────────────────────────────────────────
+const gradeColor = (g) => g === 1 ? "#16a34a" : g === 2 ? "#d97706" : "#dc2626";
+const gradeIcon  = (g) => g === 1 ? "🏅" : g === 2 ? "🟡" : "🔴";
 
 export default function App() {
-  // location state
-  const [locationInput, setLocationInput] = useState("");
-  const [locData,       setLocData]       = useState(null); // {lat,lon,display_name,soil,elevation,weather,climate}
+
+  // ── Location state ──────────────────────────────────────────────────────────
+  const [locationInput, setLocationInput] = useState("");   // text name
+  const [latInput,      setLatInput]      = useState("");   // manual lat
+  const [lonInput,      setLonInput]      = useState("");   // manual lon
+  const [locData,       setLocData]       = useState(null);
   const [locLoading,    setLocLoading]    = useState(false);
   const [locError,      setLocError]      = useState("");
 
-  // image analysis state
-  const [imageFile,     setImageFile]     = useState(null);
-  const [imagePreview,  setImagePreview]  = useState(null);
-  const [analysisResult,setAnalysisResult]= useState(null);
-  const [analysisLoading,setAnalysisLoading]=useState(false);
-  const [analysisError, setAnalysisError] = useState("");
+  // ── Image analysis state ────────────────────────────────────────────────────
+  const [imageFile,        setImageFile]        = useState(null);
+  const [imagePreview,     setImagePreview]     = useState(null);
+  const [analysisResult,   setAnalysisResult]   = useState(null);
+  const [analysisLoading,  setAnalysisLoading]  = useState(false);
+  const [analysisError,    setAnalysisError]    = useState("");
 
-  // crop plan state
-  const [sowingDate,    setSowingDate]    = useState("");
-  const [planResult,    setPlanResult]    = useState(null);
-  const [planLoading,   setPlanLoading]   = useState(false);
-  const [planError,     setPlanError]     = useState("");
+  // ── Crop plan state ─────────────────────────────────────────────────────────
+  const [sowingDate, setSowingDate] = useState("");
+  const [planResult, setPlanResult] = useState(null);
+  const [planLoading,setPlanLoading]= useState(false);
+  const [planError,  setPlanError]  = useState("");
 
-  // active tab
+  // ── Tab ─────────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState("analysis");
 
-  // ── Load Location ───────────────────────────────────────────────────────────
-  const loadLocation = async () => {
+  // ── Shared: fetch weather + climate after we have lat/lon ───────────────────
+  const fetchWeatherAndClimate = async (lat, lon) => {
+    const [wxRes, climRes] = await Promise.all([
+      fetch(`${API}/api/weather?lat=${lat}&lon=${lon}`),
+      fetch(`${API}/api/climate?lat=${lat}&lon=${lon}`),
+    ]);
+    const wx   = await wxRes.json();
+    const clim = await climRes.json();
+    return { wx, clim };
+  };
+
+  // ── Option 1: Load by location name ────────────────────────────────────────
+  const loadByName = async () => {
     if (!locationInput.trim()) return;
     setLocLoading(true);
     setLocError("");
@@ -44,20 +57,14 @@ export default function App() {
     setPlanResult(null);
 
     try {
-      // 1. Geocode + soil
+      // Geocode name → lat/lon + soil
       const geoRes = await fetch(
         `${API}/api/geocode?location=${encodeURIComponent(locationInput)}`
       );
       const geo = await geoRes.json();
       if (!geo.success) throw new Error(geo.error);
 
-      // 2. Weather
-      const wxRes = await fetch(`${API}/api/weather?lat=${geo.lat}&lon=${geo.lon}`);
-      const wx    = await wxRes.json();
-
-      // 3. Climate (10yr)
-      const climRes = await fetch(`${API}/api/climate?lat=${geo.lat}&lon=${geo.lon}`);
-      const clim    = await climRes.json();
+      const { wx, clim } = await fetchWeatherAndClimate(geo.lat, geo.lon);
 
       setLocData({
         name:         locationInput,
@@ -70,13 +77,64 @@ export default function App() {
         climate:      clim,
       });
     } catch (e) {
-      setLocError(e.message || "Could not load location. Try adding state name.");
+      setLocError(e.message || "Could not find location. Try adding state, e.g. 'Koraput, Odisha'");
     } finally {
       setLocLoading(false);
     }
   };
 
-  // ── Image Drop ──────────────────────────────────────────────────────────────
+  // ── Option 2: Load by coordinates ──────────────────────────────────────────
+  const loadByCoords = async () => {
+    const lat = parseFloat(latInput);
+    const lon = parseFloat(lonInput);
+
+    if (isNaN(lat) || isNaN(lon)) {
+      setLocError("Please enter valid numbers for both latitude and longitude.");
+      return;
+    }
+    if (lat < -90 || lat > 90) {
+      setLocError("Latitude must be between -90 and 90. Example: 18.8115");
+      return;
+    }
+    if (lon < -180 || lon > 180) {
+      setLocError("Longitude must be between -180 and 180. Example: 82.7121");
+      return;
+    }
+
+    setLocLoading(true);
+    setLocError("");
+    setLocData(null);
+    setAnalysisResult(null);
+    setPlanResult(null);
+
+    try {
+      // Reverse geocode coords → place name + soil
+      const geoRes = await fetch(
+        `${API}/api/reverse-geocode?lat=${lat}&lon=${lon}`
+      );
+      const geo = await geoRes.json();
+      if (!geo.success) throw new Error(geo.error);
+
+      const { wx, clim } = await fetchWeatherAndClimate(lat, lon);
+
+      setLocData({
+        name:         geo.name,
+        display_name: geo.display_name,
+        lat,
+        lon,
+        soil:         geo.soil,
+        elevation:    clim.elevation,
+        weather:      wx,
+        climate:      clim,
+      });
+    } catch (e) {
+      setLocError(e.message || "Could not load data for these coordinates.");
+    } finally {
+      setLocLoading(false);
+    }
+  };
+
+  // ── Image drop ──────────────────────────────────────────────────────────────
   const onDrop = useCallback((files) => {
     if (files[0]) {
       setImageFile(files[0]);
@@ -85,11 +143,14 @@ export default function App() {
       setAnalysisError("");
     }
   }, []);
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop, accept: { "image/*": [".jpg", ".jpeg", ".png"] }, maxFiles: 1,
+    onDrop,
+    accept: { "image/*": [".jpg", ".jpeg", ".png"] },
+    maxFiles: 1,
   });
 
-  // ── Analyse Image ───────────────────────────────────────────────────────────
+  // ── Analyse image ───────────────────────────────────────────────────────────
   const analyseImage = async () => {
     if (!imageFile || !locData) return;
     setAnalysisLoading(true);
@@ -115,7 +176,7 @@ export default function App() {
     }
   };
 
-  // ── Generate Crop Plan ──────────────────────────────────────────────────────
+  // ── Generate crop plan ──────────────────────────────────────────────────────
   const generatePlan = async () => {
     if (!sowingDate || !locData) return;
     setPlanLoading(true);
@@ -144,90 +205,38 @@ export default function App() {
     }
   };
 
-  // ── Download Report ─────────────────────────────────────────────────────────
-//   const downloadReport = (content, filename) => {
-//     const now  = new Date().toLocaleString("en-IN");
-//     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-// <title>${filename}</title>
-// <style>
-//   body { font-family: 'Segoe UI', sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1f2937; }
-//   h1 { color: #14532d; border-bottom: 3px solid #dcfce7; padding-bottom: 12px; }
-//   h2, h3 { color: #166534; }
-//   p { line-height: 1.8; }
-//   ul, ol { line-height: 1.8; }
-//   .header { background: linear-gradient(135deg,#14532d,#166534); color: white; padding: 24px; border-radius: 12px; margin-bottom: 24px; }
-//   .footer { text-align: center; color: #9ca3af; font-size: 12px; margin-top: 40px; border-top: 1px solid #f3f4f6; padding-top: 16px; }
-//   @media print { .header { -webkit-print-color-adjust: exact; } }
-// </style></head><body>
-// <div class="header">
-//   <h1 style="color:white;border:none;margin:0">🌾 Pur Ferme Report</h1>
-//   <p style="margin:4px 0;opacity:.85">Location: ${locData?.name || ""} | Generated: ${now}</p>
-// </div>
-// ${content}
-// <div class="footer"><p>Pur Ferme Traceability System | Advisory only — validate with local agronomist</p></div>
-// </body></html>`;
-//     const blob = new Blob([html], { type: "text/html" });
-//     const url  = URL.createObjectURL(blob);
-//     const a    = document.createElement("a");
-//     a.href = url; a.download = filename + ".html"; a.click();
-//     URL.revokeObjectURL(url);
-//   };
-
-//   const downloadReport = async (content, filename, type) => {
-//   try {
-//     const res = await fetch(`${API}/api/generate-pdf`, {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json" },
-//       body: JSON.stringify({
-//         content,
-//         filename,
-//         type,
-//         location: locData?.name || "",
-//         result: type === "analysis" ? analysisResult : planResult,
-//         sowing_date: sowingDate,
-//       }),
-//     });
-//     const blob = await res.blob();
-//     const url  = URL.createObjectURL(blob);
-//     const a    = document.createElement("a");
-//     a.href = url;
-//     a.download = filename + ".pdf";
-//     a.click();
-//     URL.revokeObjectURL(url);
-//   } catch (e) {
-//     alert("PDF generation failed: " + e.message);
-//   }
-// };
+  // ── Download PDF ────────────────────────────────────────────────────────────
   const downloadReport = async (content, filename, type, resultData) => {
-  try {
-    const res = await fetch(`${API}/api/generate-pdf`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content,
-        filename,
-        type,
-        location:    locData?.name || "",
-        result:      resultData,
-        sowing_date: sowingDate,
-      }),
-    });
-    if (!res.ok) throw new Error("PDF generation failed");
-    const blob = await res.blob();
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href     = url;
-    a.download = filename + ".pdf";
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    alert("PDF generation failed: " + e.message);
-  }
-};
-  
+    try {
+      const res = await fetch(`${API}/api/generate-pdf`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          content,
+          filename,
+          type,
+          location:    locData?.name || "",
+          result:      resultData,
+          sowing_date: sowingDate,
+        }),
+      });
+      if (!res.ok) throw new Error("PDF generation failed");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = filename + ".pdf";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert("PDF generation failed: " + e.message);
+    }
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="app">
+
       {/* Header */}
       <header className="app-header">
         <div className="header-content">
@@ -243,36 +252,90 @@ export default function App() {
 
       <main className="main">
 
-        {/* ── LOCATION SECTION ─────────────────────────────────────────── */}
+        {/* ── LOCATION SECTION ───────────────────────────────────────────────── */}
         <section className="section location-section">
           <h2 className="section-title">📍 Farm Location</h2>
           <p className="section-subtitle">
-            Enter any village, town, or district — map, weather, soil, and 10-year climate data load automatically.
+            Search by location name OR enter exact GPS coordinates — both load
+            map, weather, soil profile, and 10-year climate data automatically.
+          </p>
+
+          {/* Option 1 — Location Name */}
+          <p className="option-label">Option 1 — Search by Name</p>
+          <div className="location-input-row" style={{ marginBottom: "18px" }}>
+            <input
+              className="location-input"
+              type="text"
+              placeholder="e.g. Koraput, Odisha  or  Anantapur, Andhra Pradesh"
+              value={locationInput}
+              onChange={(e) => setLocationInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && loadByName()}
+            />
+            <button
+              className="btn btn-primary"
+              onClick={loadByName}
+              disabled={locLoading || !locationInput.trim()}
+            >
+              {locLoading ? "Loading…" : "🔍 Search"}
+            </button>
+          </div>
+
+          {/* Divider */}
+          <div className="or-divider">
+            <div className="or-line" />
+            <span className="or-text">OR</span>
+            <div className="or-line" />
+          </div>
+
+          {/* Option 2 — Manual Coordinates */}
+          <p className="option-label">Option 2 — Enter Exact Coordinates</p>
+          <p className="option-hint">
+            Decimal degrees format &nbsp;|&nbsp;
+            Example — Latitude: <strong>18.8115</strong> &nbsp; Longitude: <strong>82.7121</strong>
+            &nbsp; (these are coordinates for Koraput, Odisha)
           </p>
           <div className="location-input-row">
             <input
               className="location-input"
-              type="text"
-              placeholder="e.g. Koraput, Jeypore, Anantapur, Bellary…"
-              value={locationInput}
-              onChange={(e) => setLocationInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && loadLocation()}
+              type="number"
+              step="0.0001"
+              min="-90"
+              max="90"
+              placeholder="Latitude  (e.g. 18.8115 for Koraput)"
+              value={latInput}
+              onChange={(e) => setLatInput(e.target.value)}
+            />
+            <input
+              className="location-input"
+              type="number"
+              step="0.0001"
+              min="-180"
+              max="180"
+              placeholder="Longitude  (e.g. 82.7121 for Koraput)"
+              value={lonInput}
+              onChange={(e) => setLonInput(e.target.value)}
             />
             <button
               className="btn btn-primary"
-              onClick={loadLocation}
-              disabled={locLoading || !locationInput.trim()}
+              onClick={loadByCoords}
+              disabled={locLoading || !latInput || !lonInput}
             >
-              {locLoading ? "Loading…" : "🔍 Load"}
+              {locLoading ? "Loading…" : "📌 Load"}
             </button>
           </div>
-          {locError && <div className="error-box">❌ {locError}</div>}
+
+          {locError && (
+            <div className="error-box" style={{ marginTop: "12px" }}>
+              ❌ {locError}
+            </div>
+          )}
         </section>
 
-        {/* ── LOCATION RESULT ───────────────────────────────────────────── */}
+        {/* ── LOCATION RESULT ─────────────────────────────────────────────────── */}
         {locData && (
           <section className="section">
             <div className="location-grid">
+
               {/* Map */}
               <div className="map-container">
                 <MapView lat={locData.lat} lon={locData.lon} name={locData.name} />
@@ -280,15 +343,37 @@ export default function App() {
 
               {/* Info panels */}
               <div className="info-panels">
+
                 {/* Location card */}
                 <div className="info-card">
                   <h3>📍 Location</h3>
                   <div className="info-rows">
-                    <div className="info-row"><span>Coordinates</span><strong>{locData.lat.toFixed(4)}°N, {locData.lon.toFixed(4)}°E</strong></div>
-                    {locData.elevation && <div className="info-row"><span>Elevation</span><strong>{Math.round(locData.elevation)} m</strong></div>}
-                    <div className="info-row"><span>Soil Type</span><strong>{locData.soil?.type}</strong></div>
-                    <div className="info-row"><span>Soil pH</span><strong>{locData.soil?.ph}</strong></div>
-                    <div className="info-row"><span>Deficiencies</span><strong>{locData.soil?.deficiencies}</strong></div>
+                    <div className="info-row">
+                      <span>Name</span>
+                      <strong>{locData.display_name?.split(",").slice(0, 3).join(", ")}</strong>
+                    </div>
+                    <div className="info-row">
+                      <span>Coordinates</span>
+                      <strong>{locData.lat.toFixed(4)}°N, {locData.lon.toFixed(4)}°E</strong>
+                    </div>
+                    {locData.elevation && (
+                      <div className="info-row">
+                        <span>Elevation</span>
+                        <strong>{Math.round(locData.elevation)} m</strong>
+                      </div>
+                    )}
+                    <div className="info-row">
+                      <span>Soil Type</span>
+                      <strong>{locData.soil?.type}</strong>
+                    </div>
+                    <div className="info-row">
+                      <span>Soil pH</span>
+                      <strong>{locData.soil?.ph}</strong>
+                    </div>
+                    <div className="info-row">
+                      <span>Deficiencies</span>
+                      <strong>{locData.soil?.deficiencies}</strong>
+                    </div>
                   </div>
                 </div>
 
@@ -310,11 +395,12 @@ export default function App() {
                         <div className="weather-label">Wind</div>
                       </div>
                       <div className="weather-item">
-                        <div className="weather-value" style={{fontSize:"16px"}}>{locData.weather.condition}</div>
+                        <div className="weather-value" style={{ fontSize: "15px" }}>
+                          {locData.weather.condition}
+                        </div>
                         <div className="weather-label">Condition</div>
                       </div>
                     </div>
-                    {/* Disease risk banner */}
                     {locData.weather.humidity > 80 && locData.weather.temp > 28
                       ? <div className="risk-banner risk-high">⚠️ High disease-risk conditions</div>
                       : locData.weather.humidity > 65
@@ -354,11 +440,12 @@ export default function App() {
               >🌱 Season Planner</button>
             </div>
 
-            {/* ── CROP ANALYSIS TAB ─────────────────────────────────────── */}
+            {/* ── CROP ANALYSIS TAB ──────────────────────────────────────────── */}
             {activeTab === "analysis" && (
               <div className="tab-content">
                 <p className="section-subtitle">
-                  Upload a leaf image → AI detects the condition → Gemini explains why using live weather + 10-year climate data.
+                  Upload a leaf image → AI detects the condition → report generated
+                  using live weather + 10-year climate data for {locData.name}.
                 </p>
 
                 <div className="analysis-grid">
@@ -371,11 +458,13 @@ export default function App() {
                       <input {...getInputProps()} />
                       {imagePreview
                         ? <img src={imagePreview} alt="Uploaded leaf" className="preview-img" />
-                        : <div className="dropzone-hint">
-                            <div style={{fontSize:"48px"}}>📸</div>
+                        : (
+                          <div className="dropzone-hint">
+                            <div style={{ fontSize: "48px" }}>📸</div>
                             <p>Drop a leaf image here or click to upload</p>
-                            <p style={{fontSize:"13px",color:"#9ca3af"}}>JPG, PNG supported</p>
+                            <p style={{ fontSize: "13px", color: "#9ca3af" }}>JPG, PNG supported</p>
                           </div>
+                        )
                       }
                     </div>
                     {imageFile && (
@@ -383,7 +472,7 @@ export default function App() {
                         className="btn btn-primary btn-full"
                         onClick={analyseImage}
                         disabled={analysisLoading}
-                        style={{marginTop:"12px"}}
+                        style={{ marginTop: "12px" }}
                       >
                         {analysisLoading ? "🤖 Analysing…" : "🔍 Analyse Crop Health"}
                       </button>
@@ -397,14 +486,13 @@ export default function App() {
                       <div className="loading-card">
                         <div className="spinner" />
                         <p>Running disease detection + generating AI report…</p>
-                        <p style={{fontSize:"13px",color:"#6b7280"}}>Usually takes 10–15 seconds</p>
+                        <p style={{ fontSize: "13px", color: "#6b7280" }}>Usually takes 10–15 seconds</p>
                       </div>
                     )}
 
                     {analysisResult && (
                       <div>
-                        {/* Grade result */}
-                        <div className="result-card" style={{borderColor: gradeColor(analysisResult.grade)}}>
+                        <div className="result-card" style={{ borderColor: gradeColor(analysisResult.grade) }}>
                           <div className="result-metrics">
                             <div className="metric">
                               <div className="metric-value">{analysisResult.pred_class}</div>
@@ -415,21 +503,17 @@ export default function App() {
                               <div className="metric-label">Confidence</div>
                             </div>
                             <div className="metric">
-                              <div className="metric-value" style={{color: gradeColor(analysisResult.grade)}}>
+                              <div className="metric-value" style={{ color: gradeColor(analysisResult.grade) }}>
                                 Grade {analysisResult.grade}
                               </div>
                               <div className="metric-label">Supply Chain</div>
                             </div>
                           </div>
-                          <div
-                            className="grade-badge"
-                            style={{background: gradeColor(analysisResult.grade)}}
-                          >
+                          <div className="grade-badge" style={{ background: gradeColor(analysisResult.grade) }}>
                             {gradeIcon(analysisResult.grade)} {analysisResult.grade_label}
                           </div>
                         </div>
 
-                        {/* Class probabilities */}
                         <div className="probs-card">
                           <h4>Class Probabilities</h4>
                           {Object.entries(analysisResult.all_probs).map(([cls, pct]) => (
@@ -440,7 +524,7 @@ export default function App() {
                                   className="prob-bar-fill"
                                   style={{
                                     width: `${pct}%`,
-                                    background: cls === "Healthy" ? "#16a34a" : "#dc2626"
+                                    background: cls === "Healthy" ? "#16a34a" : "#dc2626",
                                   }}
                                 />
                               </div>
@@ -466,10 +550,8 @@ export default function App() {
                     <button
                       className="btn btn-outline"
                       onClick={() => downloadReport(
-                        // `<div class="report-body">${analysisResult.llm_report.replace(/\n/g,'<br>')}</div>`,
                         analysisResult.llm_report,
-                        `PurFerme_CropHealth_${locData.name}_${new Date().toISOString().slice(0,10)}`,
-                        // `PurFerme_CropHealth_${locData.name}_${new Date().toISOString().slice(0,10)}`
+                        `PurFerme_CropHealth_${locData.name}_${new Date().toISOString().slice(0, 10)}`,
                         "analysis",
                         analysisResult
                       )}
@@ -481,11 +563,12 @@ export default function App() {
               </div>
             )}
 
-            {/* ── SEASON PLANNER TAB ────────────────────────────────────── */}
+            {/* ── SEASON PLANNER TAB ─────────────────────────────────────────── */}
             {activeTab === "planner" && (
               <div className="tab-content">
                 <p className="section-subtitle">
-                  Enter your sowing date — Gemini builds a full season plan using 10 years of real climate data for {locData.name}.
+                  Enter your sowing date — AI builds a full season plan using
+                  10 years of real climate data for {locData.name}.
                 </p>
 
                 <div className="planner-input-row">
@@ -515,7 +598,7 @@ export default function App() {
                   <div className="loading-card">
                     <div className="spinner" />
                     <p>Building season plan from 10-year climate data…</p>
-                    <p style={{fontSize:"13px",color:"#6b7280"}}>Usually takes 15–20 seconds</p>
+                    <p style={{ fontSize: "13px", color: "#6b7280" }}>Usually takes 15–20 seconds</p>
                   </div>
                 )}
 
@@ -524,8 +607,12 @@ export default function App() {
                     <div className="report-header">
                       <div>
                         <h3>🗓️ Season Plan — {locData.name}</h3>
-                        <p style={{margin:"4px 0",fontSize:"14px",color:"#6b7280"}}>
-                          Sowing: <strong>{new Date(sowingDate).toLocaleDateString("en-IN",{day:"numeric",month:"long",year:"numeric"})}</strong>
+                        <p style={{ margin: "4px 0", fontSize: "14px", color: "#6b7280" }}>
+                          Sowing: <strong>
+                            {new Date(sowingDate).toLocaleDateString("en-IN", {
+                              day: "numeric", month: "long", year: "numeric"
+                            })}
+                          </strong>
                           &nbsp;|&nbsp; Est. Harvest: <strong>{planResult.harvest_est}</strong>
                           &nbsp;|&nbsp; Duration: <strong>85 days</strong>
                         </p>
@@ -539,7 +626,6 @@ export default function App() {
                       className="btn btn-outline"
                       onClick={() => downloadReport(
                         planResult.plan,
-                        // `<div>${planResult.plan.replace(/\n/g,'<br>')}</div>`,
                         `PurFerme_SeasonPlan_${locData.name}_${sowingDate}`,
                         "plan",
                         planResult
@@ -547,8 +633,6 @@ export default function App() {
                     >
                       ⬇️ Download Season Plan (PDF)
                     </button>
-                    
-                    
                   </div>
                 )}
               </div>
@@ -559,7 +643,9 @@ export default function App() {
 
       <footer className="app-footer">
         <p>🌾 Pur Ferme Traceability System — AI-Powered Crop Health & Season Planning</p>
-        <p style={{fontSize:"12px",opacity:0.7}}>FastAI Disease Model + Gemini 2.5 Flash + Open-Meteo 10yr Climate Data</p>
+        <p style={{ fontSize: "12px", opacity: 0.7 }}>
+          FastAI Disease Model + Llama 3.3 (Groq) + Open-Meteo 10yr Climate Data
+        </p>
       </footer>
     </div>
   );

@@ -198,3 +198,38 @@ a { color: #16a34a; }
   .report-header  { flex-direction: column; }
   .planner-input-row { flex-direction: column; }
 }
+
+/* ── Add these lines to the bottom of your App.css ─────────────────────────── */
+
+.option-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.option-hint {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.or-line {
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+
+.or-text {
+  color: #9ca3af;
+  font-size: 13px;
+  font-weight: 600;
+}

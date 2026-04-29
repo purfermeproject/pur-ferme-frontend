@@ -21,3 +21,16 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# Dependencies — too large, reinstalled automatically
+node_modules/
+
+# Environment variables — never push
+.env
+.env.local
+.env.production
+
+# Build output
+build/
+
+# VS Code
+.vscode/
